@@ -14,6 +14,7 @@ RUN pip install --no-cache-dir torch==2.5.1+cpu torchaudio==2.5.1+cpu --index-ur
     && rm -rf /var/lib/apt/lists/* \
     && git clone --depth=1 https://github.com/franciscocarloserra/ttslibre.git /opt/ttslibre \
     && hf download FranciscoCarlosErra/ttslibre-poc-es-ar --local-dir /tmp/model \
+    && hf download charactr/vocos-mel-24khz \
     && mkdir -p /opt/ttslibre/experiments/20-scaling/014-spanish-8h-openslr61/runs/es8h \
                 /opt/ttslibre/experiments/20-scaling/014-spanish-8h-openslr61/runs/ae \
                 /opt/ttslibre/experiments/voices \
