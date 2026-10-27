@@ -1,4 +1,4 @@
-"""Public MCP server for six synthetic Argentine Spanish TTS voicepacks."""
+"""Public MCP server for Argentine Spanish text-to-speech."""
 from __future__ import annotations
 
 import asyncio
@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 from typing import Literal
 
-import soundfile as sf
+import edge_tts
 from fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.routing import Mount
@@ -18,16 +18,21 @@ from starlette.staticfiles import StaticFiles
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("voces_argentinas")
 
-ROOT = Path(os.environ.get("TTSLIBRE_ROOT", "/opt/ttslibre"))
-EXPERIMENT = ROOT / "experiments" / "20-scaling" / "014-spanish-8h-openslr61"
 OUTPUTS = Path(os.environ.get("AUDIO_OUTPUT_DIR", "/data/audio"))
 PUBLIC_AUDIO_BASE_URL = os.environ.get("PUBLIC_AUDIO_BASE_URL", "").rstrip("/")
 
-FEMALE = ("arf_00295", "arf_06136", "arf_08784")
-MALE = ("arm_00610", "arm_06136", "arm_08784")
+# Edge provides the two Microsoft Argentine Spanish neural speakers. Variants tune delivery.
+VOICES = {
+    "arf_00295": ("es-AR-ElenaNeural", "+0%", "+0Hz", "femenina"),
+    "arf_06136": ("es-AR-ElenaNeural", "-10%", "+2Hz", "femenina"),
+    "arf_08784": ("es-AR-ElenaNeural", "+12%", "-2Hz", "femenina"),
+    "arm_00610": ("es-AR-TomasNeural", "+0%", "+0Hz", "masculina"),
+    "arm_06136": ("es-AR-TomasNeural", "-10%", "-2Hz", "masculina"),
+    "arm_08784": ("es-AR-TomasNeural", "+12%", "+2Hz", "masculina"),
+}
+FEMALE = tuple(k for k, v in VOICES.items() if v[3] == "femenina")
+MALE = tuple(k for k, v in VOICES.items() if v[3] == "masculina")
 ALL = FEMALE + MALE
-_synth = None
-_load_lock = asyncio.Lock()
 _generate_lock = asyncio.Lock()
 
 def select_voice(genero: str, voz: str | None) -> str:
@@ -38,29 +43,15 @@ def select_voice(genero: str, voz: str | None) -> str:
         return voz
     return secrets.choice(pool)
 
-async def get_synth():
-    global _synth
-    if _synth is not None:
-        return _synth
-    async with _load_lock:
-        if _synth is None:
-            import sys
-            sys.path.insert(0, str(EXPERIMENT))
-            from common import load_config
-            from synth import Synth
-            config = load_config(str(EXPERIMENT / "config.json"))
-            _synth = (Synth(config, run=str(EXPERIMENT / "runs" / "es8h" / "ttl.pt")), config)
-    return _synth
-
-async def render(texto: str, voice: str) -> tuple[Path, float]:
-    synth, config = await get_synth()
+async def render(texto: str, voice_id: str) -> tuple[Path, float]:
+    voice, rate, pitch, _ = VOICES[voice_id]
+    OUTPUTS.mkdir(parents=True, exist_ok=True)
+    path = OUTPUTS / f"{uuid.uuid4().hex}.mp3"
     async with _generate_lock:
-        zref, rmask = synth.style(str(ROOT / "experiments" / "voices" / f"{voice}.pt"))
-        wav, _ = synth(texto, zref, rmask, steps=16, cfg=2.0, duration_scale=1.0)
-        OUTPUTS.mkdir(parents=True, exist_ok=True)
-        path = OUTPUTS / f"{uuid.uuid4().hex}.wav"
-        sf.write(path, wav, config["data"]["sample_rate"])
-    return path, len(wav) / float(config["data"]["sample_rate"])
+        communicate = edge_tts.Communicate(texto, voice, rate=rate, pitch=pitch)
+        await communicate.save(str(path))
+    # Approximate display duration; clients play the MP3's real duration.
+    return path, max(0.5, len(texto.split()) / 2.5)
 
 mcp = FastMCP("Voces Argentinas TTS")
 
@@ -70,7 +61,7 @@ async def generar_voz_argentina(
     genero: Literal["femenina", "masculina", "aleatoria"] = "aleatoria",
     voz: str | None = None,
 ) -> dict[str, object]:
-    """Genera una locución nueva en español argentino y devuelve un WAV."""
+    """Genera una locución nueva en español argentino y devuelve un MP3."""
     texto = " ".join(texto.split())
     if not texto or len(texto) > 900:
         raise ValueError("El guion debe tener entre 1 y 900 caracteres.")
@@ -84,16 +75,16 @@ async def generar_voz_argentina(
         raise
     return {
         "audio_url": f"{PUBLIC_AUDIO_BASE_URL}/{path.name}",
-        "formato": "wav",
+        "formato": "mp3",
         "voz_usada": chosen,
-        "genero": "femenina" if chosen.startswith("arf_") else "masculina",
-        "duracion_segundos": round(duration, 2),
-        "atribucion": "TTSLibre es-AR, CC BY-SA 4.0",
+        "genero": VOICES[chosen][3],
+        "duracion_aproximada_segundos": round(duration, 2),
+        "motor": "Microsoft Edge TTS es-AR",
     }
 
 @mcp.tool()
 def listar_voces_argentinas() -> dict[str, list[str]]:
-    """Devuelve las seis voces argentinas disponibles."""
+    """Devuelve las opciones de voz argentinas disponibles."""
     return {"femeninas": list(FEMALE), "masculinas": list(MALE)}
 
 mcp_app = mcp.http_app(path="/")
