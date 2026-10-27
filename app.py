@@ -1,10 +1,11 @@
-"""Public MCP server for Argentine Spanish text-to-speech."""
+"""Public MCP server for Argentine Spanish text-to-speech and template videos."""
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
 import secrets
+import subprocess
 import uuid
 from pathlib import Path
 from typing import Literal
@@ -53,7 +54,39 @@ async def render(texto: str, voice_id: str) -> tuple[Path, float]:
     # Approximate display duration; clients play the MP3's real duration.
     return path, max(0.5, len(texto.split()) / 2.5)
 
-mcp = FastMCP("Voces Argentinas TTS")
+async def render_template_video(audio: Path, duration: float) -> Path:
+    """Create a vertical waveform animation without an external video model."""
+    output = OUTPUTS / f"{uuid.uuid4().hex}.mp4"
+    seconds = max(1.0, duration + 0.35)
+    command = [
+        "ffmpeg", "-y",
+        "-f", "lavfi", "-i", f"color=c=0x17112F:s=720x1280:r=30:d={seconds:.2f}",
+        "-i", str(audio),
+        "-filter_complex",
+        "[1:a]showwaves=s=600x180:mode=line:colors=0xD8C6FF[wave];"
+        "[0:v][wave]overlay=(W-w)/2:(H-h)/2:shortest=1,format=yuv420p[v]",
+        "-map", "[v]", "-map", "1:a:0", "-shortest",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
+        "-c:a", "aac", "-b:a", "96k", "-movflags", "+faststart", str(output),
+    ]
+    await asyncio.to_thread(
+        subprocess.run,
+        command,
+        check=True,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.PIPE,
+        timeout=90,
+    )
+    return output
+
+mcp = FastMCP(
+    "Voces Argentinas TTS",
+    instructions=(
+        "Para locución sola usá generar_voz_argentina. Para una animación vertical "
+        "sin créditos de voz ni video, usá crear_video_con_voz_argentina: devuelve "
+        "un MP4 con una visualización de onda y la voz argentina integrada."
+    ),
+)
 
 @mcp.tool()
 async def generar_voz_argentina(
@@ -80,6 +113,41 @@ async def generar_voz_argentina(
         "genero": VOICES[chosen][3],
         "duracion_aproximada_segundos": round(duration, 2),
         "motor": "Microsoft Edge TTS es-AR",
+    }
+
+@mcp.tool()
+async def crear_video_con_voz_argentina(
+    texto: str,
+    genero: Literal["femenina", "masculina", "aleatoria"] = "aleatoria",
+    voz: str | None = None,
+) -> dict[str, object]:
+    """Crea un MP4 vertical de onda animada con una locución argentina integrada.
+
+    No usa ElevenLabs, Higgsfield ni modelos de video de pago. Es una animación
+    de plantilla, no un video generativo; elegí género o dejá aleatoria.
+    """
+    texto = " ".join(texto.split())
+    if not texto or len(texto) > 350:
+        raise ValueError("El guion para video debe tener entre 1 y 350 caracteres.")
+    if not PUBLIC_AUDIO_BASE_URL:
+        raise RuntimeError("El servidor aún no tiene configurada su URL pública.")
+    chosen = select_voice(genero, voz)
+    try:
+        audio, duration = await render(texto, chosen)
+        video = await render_template_video(audio, duration)
+    except Exception:
+        logger.exception("Falló el render de video: voz=%s caracteres=%s", chosen, len(texto))
+        raise
+    return {
+        "video_url": f"{PUBLIC_AUDIO_BASE_URL}/{video.name}",
+        "audio_url": f"{PUBLIC_AUDIO_BASE_URL}/{audio.name}",
+        "formato": "mp4",
+        "relacion_aspecto": "9:16",
+        "voz_usada": chosen,
+        "genero": VOICES[chosen][3],
+        "duracion_aproximada_segundos": round(duration, 2),
+        "creditos_consumidos": 0,
+        "nota": "Animación de onda creada por el servidor propio; no usa un modelo generativo de video.",
     }
 
 @mcp.tool()
