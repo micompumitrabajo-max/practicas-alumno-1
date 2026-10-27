@@ -88,7 +88,11 @@ def listar_voces_argentinas() -> dict[str, list[str]]:
     """Devuelve las seis voces argentinas disponibles."""
     return {"femeninas": list(FEMALE), "masculinas": list(MALE)}
 
-app = Starlette(routes=[
-    Mount("/mcp", app=mcp.http_app(path="/")),
-    Mount("/audio", app=StaticFiles(directory=str(OUTPUTS), check_dir=False)),
-])
+mcp_app = mcp.http_app(path="/")
+app = Starlette(
+    routes=[
+        Mount("/mcp", app=mcp_app),
+        Mount("/audio", app=StaticFiles(directory=str(OUTPUTS), check_dir=False)),
+    ],
+    lifespan=mcp_app.lifespan,
+)
