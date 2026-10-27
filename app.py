@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import secrets
 import uuid
@@ -13,6 +14,9 @@ from fastmcp import FastMCP
 from starlette.applications import Starlette
 from starlette.routing import Mount
 from starlette.staticfiles import StaticFiles
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("voces_argentinas")
 
 ROOT = Path(os.environ.get("TTSLIBRE_ROOT", "/opt/ttslibre"))
 EXPERIMENT = ROOT / "experiments" / "20-scaling" / "014-spanish-8h-openslr61"
@@ -73,7 +77,11 @@ async def generar_voz_argentina(
     if not PUBLIC_AUDIO_BASE_URL:
         raise RuntimeError("El servidor aún no tiene configurada su URL pública.")
     chosen = select_voice(genero, voz)
-    path, duration = await render(texto, chosen)
+    try:
+        path, duration = await render(texto, chosen)
+    except Exception:
+        logger.exception("Falló la síntesis: voz=%s caracteres=%s", chosen, len(texto))
+        raise
     return {
         "audio_url": f"{PUBLIC_AUDIO_BASE_URL}/{path.name}",
         "formato": "wav",
