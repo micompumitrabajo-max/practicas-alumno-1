@@ -15,7 +15,7 @@ from starlette.routing import Mount
 from starlette.staticfiles import StaticFiles
 
 ROOT = Path(os.environ.get("TTSLIBRE_ROOT", "/opt/ttslibre"))
-EXPERIMENT = ROOT / "experiments" / "014-spanish-8h-openslr61"
+EXPERIMENT = ROOT / "experiments" / "20-scaling" / "014-spanish-8h-openslr61"
 OUTPUTS = Path(os.environ.get("AUDIO_OUTPUT_DIR", "/data/audio"))
 PUBLIC_AUDIO_BASE_URL = os.environ.get("PUBLIC_AUDIO_BASE_URL", "").rstrip("/")
 
